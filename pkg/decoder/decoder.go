@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf/btf"
+	// "github.com/panjf2000/gnet/pkg/pool/byteslice"
+	// "github.com/panjf2000/gnet/v2/pkg/pool/byteslice"
 )
 
 const (
@@ -34,7 +36,9 @@ func NewDecoderFactory() DecoderFactory {
 }
 
 func newDecoder() BinaryDecoder {
-	return &decoder{}
+	return &decoder{
+		// pool: byteslice.Pool{},
+	}
 }
 
 type decoder struct {
@@ -42,6 +46,8 @@ type decoder struct {
 	offset uint32
 	// Raw binary bytes to read from
 	raw []byte
+	// Pool of buffers to use for reading
+	// pool byteslice.Pool
 }
 
 func (d *decoder) DecodeBtfBinary(
@@ -156,14 +162,23 @@ func (d *decoder) handleArray(
 	}
 	length := int(typedMember.Nelems)
 	slice := make([]byte, length)
-	for i := 0; i < length; i++ {
-		buf := bytes.NewBuffer(d.raw[d.offset : d.offset+typInt.Size])
-		d.offset += typInt.Size
-		var val byte
-		if err := binary.Read(buf, Endianess, &val); err != nil {
-			return nil, err
+
+	if typInt.Size == 1 {
+		// this is faster than making a new buffer for item in the list
+		// and if the size is 1, we can just copy the byte b/c endianness doesn't matter
+		copy(slice, d.raw[d.offset:d.offset+uint32(length)])
+		d.offset += uint32(length)
+		return string(slice), nil
+	} else {
+		for i := 0; i < length; i++ {
+			buf := bytes.NewBuffer(d.raw[d.offset : d.offset+typInt.Size])
+			d.offset += typInt.Size
+			var val byte
+			if err := binary.Read(buf, Endianess, &val); err != nil {
+				return nil, err
+			}
+			slice[i] = val
 		}
-		slice[i] = val
 	}
 	n := bytes.IndexByte(slice, 0)
 	str := string(slice[:n])
